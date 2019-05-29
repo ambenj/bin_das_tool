@@ -1,0 +1,183 @@
+#!/usr/bin/env python
+from os.path import join, abspath, expanduser
+
+# Do I need to add local rules like in the other snakefile?
+# localrules: bwa_index_setup, postprocess_raw, postprocess_simplify, postprocess_final, label_bins, bin_tig_mapping, metabat, fasta_index
+
+# Read in sample and outdir from config file
+samp = config['sample']
+outdir = config['outdir_base']
+
+# convert outdir to absolute path
+if outdir[0] == '~':
+    outdir = expanduser(outdir)
+outdir = abspath(outdir)
+
+# Read in fastq files
+if 'reads2' in config and not config['reads2'] == ':'
+    reads = [config['reads1'], config['reads2']]
+else:
+    reads = [config['reads1']]
+
+# Determine if long reads
+if 'long_read' in config and config['long_read']:
+    long_read = True
+else:
+    long_read = False
+
+#### Add in function for checkpoints
+def get_metabat_bins(wildcards):
+    outputs = checkpoints.metabat.get(**wildcards).output[0]
+    return glob_wildcards(os.path.join(outputs, "{metabat_bin}.fa")).bin
+
+### Wil need to add more
+rule all:
+    reads,
+    config['assembly'],
+#    config['kraken2db'],
+    expand(join(outdir, "{samp}/metabat/checkm/checkm.tsv"), samp = config['sample']),
+
+
+##########################################
+####### Prepping input for binning #######
+##########################################
+
+# copy assembly fasta file to working directory
+rule bwa_index_setup:
+    input:
+        config['assembly']
+    output:
+        join(outdir, "{samp}/idx/{samp}.fa")
+    resources:
+        mem=1,
+        time=1
+    threads: 1
+    shell: """
+        cp {input} {output}
+        """
+
+# index assembly file
+rule bwa_index:
+    input:
+        join(outdir, "{samp}/idx/{samp}.fa")
+    output:
+        join(outdir, "{samp}/idx/{samp}.fa.amb"),
+        join(outdir, "{samp}/idx/{samp}.fa.ann"),
+        join(outdir, "{samp}/idx/{samp}.fa.bwt"),
+        join(outdir, "{samp}/idx/{samp}.fa.pac"),
+        join(outdir, "{samp}/idx/{samp}.fa.sa")
+    log:
+        join(outdir, "{samp}/logs/bwa_index.log")
+    singularity:
+        "shub://bsiranosian/bin_genomes:binning"
+    resources:
+        mem=8,
+        time=2
+    threads: 1
+    shell: """
+        bwa index {input}
+        """
+
+# Align reads to assembly
+rule bwa_align:
+    input:
+        asm = join(outdir, "{samp}/idx/{samp}.fa"),
+        reads = reads,
+        amb = join(outdir, "{samp}/idx/{samp}.fa.amb"),
+        ann = join(outdir, "{samp}/idx/{samp}.fa.ann"),
+        bwt = join(outdir, "{samp}/idx/{samp}.fa.bwt"),
+        pac = join(outdir, "{samp}/idx/{samp}.fa.pac"),
+        sa = join(outdir, "{samp}/idx/{samp}.fa.sa")
+    output:
+        join(outdir, "{samp}/{samp}.bam")
+    log:
+        join(outdir, "{samp}/logs/bwa_mem.log")
+    singularity:
+        "shub://bsiranosian/bin_genomes:binning"
+    resources:
+        mem=16,
+        time=12
+    threads: 8
+    shell: """
+        bwa mem -t {threads} {input.asm}  {input.reads} |samtools sort --threads {threads} > {output}
+        """
+
+# Align long reads (not sure if I should keep this)
+rule align_lr:
+    input:
+        join(outdir, "{samp}/idx/{samp}.fa"),
+        reads
+    log:
+        join(outdir, "{samp}/logs/align_lr.log")
+    output:
+        join(outdir, "{samp}/{samp}_lr.bam")
+    singularity:
+        "shub://bsiranosian/bin_genomes:binning"
+    resources:
+        mem=48,
+        time=6
+    threads: 16
+    shell: """
+        minimap2 -t {threads} -ax map-ont {input} | samtools sort --threads {threads} > {output}
+        """
+
+# Generate a depth file from BAM file for MetaBat input
+rule metabat_pre:
+    input:
+        join(outdir, "{samp}/{samp}_lr.bam") if long_read else join(outdir, "{samp}/{samp}.bam") #choose a long read alignment or short read alignment
+    output:
+        single = join(outdir, "{samp}/{samp}.fa.depth.txt"),
+        paired = join(outdir, "{samp}/{samp}.fa.paired.txt"),
+    singularity:
+        "shub://bsiranosian/bin_genomes:binning"
+    shell: """
+        jgi_summarize_bam_contig_depths --outputDepth {output.single} --pairedContigs {output.paired} --minContigLength 1000 --minContigDepth 1  {input} --percentIdentity 50
+        """
+
+#####################################################
+################ Binning methods ####################
+#####################################################
+
+# Run MetaBat binner
+checkpoint metabat:
+    input:
+        asm = join(outdir, "{samp}/idx/{samp}.fa"),
+        depth = join(outdir, "{samp}/{samp}.fa.depth.txt"),
+    output:
+        directory(join(outdir, "{samp}/metabat/bins/")) #the number of bins is unknown prior to execution
+    singularity:
+        "shub://bsiranosian/bin_genomes:binning"
+    resources:
+        mem=64,
+        time=24
+    threads: 4
+    params:
+        outstring = join(outdir, "{samp}/metabat/bins/bin")
+    shell: """
+        metabat2 --seed 1 -t {threads} --unbinned --inFile {input.asm} --outFile {params.outstring} --abdFile {input.depth}
+        """
+
+#####################################################
+###################### CheckM #######################
+#####################################################
+
+rule checkm:
+    input:
+        lambda wildcards: expand(join(outdir, "{samp}/metabat/bins/{metabat_bin}.fa"), metabat_bin = get_bins(wildcards), samp = wildcards.samp)
+    output:
+        join(outdir, "{samp}/metabat/checkm/checkm.tsv")
+    log:
+        join(outdir, "{samp}/metabat/logs/checkm.log")
+    singularity:
+        "shub://bsiranosian/bin_genomes:checkm"
+    resources:
+        mem=128,
+        time=24
+    threads: 8
+    params:
+        binfolder = join(outdir, "{samp}/metabat/bins/"),
+        checkmfolder = join(outdir, "{samp}/metabat/checkm/"),
+    shell: """
+        rm -rf {samp}/checkm/*
+        checkm lineage_wf -t {threads} -x fa --tab_table -f {output} {params.binfolder} {params.checkmfolder}
+        """
