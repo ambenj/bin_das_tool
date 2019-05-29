@@ -2,7 +2,7 @@
 from os.path import join, abspath, expanduser
 
 # Do I need to add local rules like in the other snakefile?
-# localrules: bwa_index_setup, postprocess_raw, postprocess_simplify, postprocess_final, label_bins, bin_tig_mapping, metabat, fasta_index
+localrules: bwa_index_setup, metabat, fasta_index
 
 # Read in sample and outdir from config file
 samp = config['sample']
@@ -14,7 +14,7 @@ if outdir[0] == '~':
 outdir = abspath(outdir)
 
 # Read in fastq files
-if 'reads2' in config and not config['reads2'] == ':'
+if 'reads2' in config and not config['reads2'] == '':
     reads = [config['reads1'], config['reads2']]
 else:
     reads = [config['reads1']]
@@ -30,12 +30,10 @@ def get_metabat_bins(wildcards):
     outputs = checkpoints.metabat.get(**wildcards).output[0]
     return glob_wildcards(os.path.join(outputs, "{metabat_bin}.fa")).bin
 
-### Wil need to add more
 rule all:
-    reads,
-    config['assembly'],
-#    config['kraken2db'],
-    expand(join(outdir, "{samp}/metabat/checkm/checkm.tsv"), samp = config['sample']),
+    input:
+        #join(outdir, samp, "idx", samp+".fa")
+        expand(join(outdir, "{samp}/metabat/checkm/checkm.tsv"), samp = config['sample'])
 
 
 ##########################################
@@ -163,7 +161,7 @@ checkpoint metabat:
 
 rule checkm:
     input:
-        lambda wildcards: expand(join(outdir, "{samp}/metabat/bins/{metabat_bin}.fa"), metabat_bin = get_bins(wildcards), samp = wildcards.samp)
+        lambda wildcards: expand(join(outdir, "{samp}/metabat/bins/{metabat_bin}.fa"), metabat_bin = get_metabat_bins(wildcards), samp = wildcards.samp)
     output:
         join(outdir, "{samp}/metabat/checkm/checkm.tsv")
     log:
