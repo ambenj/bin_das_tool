@@ -30,12 +30,15 @@ def get_metabat_bins(wildcards):
     outputs = checkpoints.metabat.get(**wildcards).output[0]
     return glob_wildcards(os.path.join(outputs, "{metabat_bin}.fa")).metabat_bin
 
+# def get_maxbin_bins(wildcards):
+#     outputs = checkpoints.maxbin.get(**wildcards).output[0]
+#     return glob_wildcards(os.path.join(outputs, "{maxbin_bin}.fa")).maxbin_bin
+
 rule all:
     input:
         #join(outdir, samp, "idx", samp+".fa")
         expand(join(outdir, "{samp}/metabat/checkm/checkm.tsv"), samp = config['sample']),
         expand(join(outdir, "{samp}/maxbin/maxbin.summary"), samp = config['sample']),
-
 
 ##########################################
 ####### Prepping input for binning #######
@@ -157,19 +160,19 @@ checkpoint metabat:
         """
 
 # Run Maxbin binner
-checkpoint maxbin:
+rule maxbin:
     input:
         contigs = config['assembly'],
         reads1 = reads[0],
         reads2 = reads[1]
     output:
-        summary="{samp}/maxbin/maxbin.summary"
+         summary="{samp}/maxbin/maxbin.summary"
     singularity:
-        "Put singularity here"
+        "shub://bsiranosian/bin_genomes:binning"
     params:
-        outfolder = join(outdir, "{samp}/maxbin/bins/")
+        outfolder="{samp}/maxbin/"
     resources:
-        cores=16
+        cores=16,
         time=lambda wildcards, attempt: attempt * 2
     shell:
         """
