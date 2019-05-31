@@ -25,20 +25,20 @@ if 'long_read' in config and config['long_read']:
 else:
     long_read = False
 
-#### Add in function for checkpoints
+
 def get_metabat_bins(wildcards):
     outputs = checkpoints.metabat.get(**wildcards).output[0]
     return glob_wildcards(os.path.join(outputs, "{metabat_bin}.fa")).metabat_bin
 
-# def get_maxbin_bins(wildcards):
-#     outputs = checkpoints.maxbin.get(**wildcards).output[0]
-#     return glob_wildcards(os.path.join(outputs, "{maxbin_bin}.fa")).maxbin_bin
+def get_maxbin_bins(wildcards):
+    outputs = checkpoints.maxbin.get(**wildcards).output[0]
+    return glob_wildcards(os.path.join(outputs, "{maxbin_bin}.fasta")).maxbin_bin
 
 rule all:
     input:
         #join(outdir, samp, "idx", samp+".fa")
         expand(join(outdir, "{samp}/metabat/checkm/checkm.tsv"), samp = config['sample']),
-        expand(join(outdir, "{samp}/maxbin/maxbin.summary"), samp = config['sample']),
+        expand(join(outdir, "{samp}/maxbin/checkm/checkm.tsv"), samp = config['sample']),
 
 ##########################################
 ####### Prepping input for binning #######
@@ -159,14 +159,15 @@ checkpoint metabat:
         metabat2 --seed 1 -t {threads} --unbinned --inFile {input.asm} --outFile {params.outstring} --abdFile {input.depth}
         """
 
-# Run Maxbin binner
-rule maxbin:
+# Run MaxBin2 binner
+checkpoint maxbin:
     input:
         contigs = config['assembly'],
         reads1 = reads[0],
         reads2 = reads[1]
     output:
-         summary="{samp}/maxbin/maxbin.summary"
+        #summary="{samp}/maxbin/maxbin.summary",
+        directory(join(outdir, "{samp}/maxbin/bins"))
     singularity:
         "shub://bsiranosian/bin_genomes:binning"
     params:
@@ -181,12 +182,41 @@ rule maxbin:
         cd {params.outfolder}
         run_MaxBin.pl -contig {input.contigs} -out maxbin \
         -reads {input.reads1} -reads2 {input.reads2} -thread {resources.cores}
+        mkdir bins/
+        mv *.fasta bins/
         """
+
+# Aggregate binning results using DAStool
+# checkpoint DAS_tool:
+#     input:
+#         lambda wildcards: expand(join(outdir, "{samp}/metabat/bins/{metabat_bin}.fa"), metabat_bin = get_metabat_bins(wildcards), samp = wildcards.samp),
+#         lambda wildcards: expand(join(outdir, "{samp}/maxbin/bins/{maxbin_bin}.fasta"), maxbin_bin = get_maxbin_bins(wildcards), samp = wildcards.samp),
+#     output:
+#         directory(join(outdir, "{samp}/DAS_tool/twomethods_DAStool_bins"))
+#     singularity:
+#         "put singularity here"
+#     params:
+#         outfolder="{samp}/DAS_tool"
+#     resources:
+#         cores=16
+#     shell:
+#         """
+#         if [ -d {params.outfolder} ]; then rm -r {params.outfolder}; fi
+#         mkdir -p {params.outfolder}
+#
+#         module load usearch
+#         Fasta_to_Scaffolds2Bin.sh -e fa -i {wildcards.samp}/metabat/bins/ > {wildcards.samp}/DAS_Tool/metabat_scaffold2bin.tsv
+#         Fasta_to_Scaffolds2Bin.sh -i {wildcards.samp}/maxbin/ > {wildcards.samp}/DAS_Tool/maxbin_scaffold2bin.tsv
+#         Fasta_to_Scaffolds2Bin.sh -i {wildcards.samp}/mycc > {wildcards.samp}/DAS_Tool/mycc_scaffold2bin.tsv
+#         sed 's/,/\t/g' {wildcards.samp}/concoct/output/clustering_gt1000.csv > {wildcards.samp}/DAS_Tool/concoct_scaffold2bin.tsv
+#         """
+
 
 #####################################################
 ###################### CheckM #######################
 #####################################################
 
+# checkm for metabat output
 rule checkm_metabat:
     input:
         lambda wildcards: expand(join(outdir, "{samp}/metabat/bins/{metabat_bin}.fa"), metabat_bin = get_metabat_bins(wildcards), samp = wildcards.samp)
@@ -198,12 +228,35 @@ rule checkm_metabat:
         "shub://bsiranosian/bin_genomes:checkm"
     resources:
         mem=128,
-        time=24
-    threads: 8
+        time=12
+    threads: 4
     params:
         binfolder = join(outdir, "{samp}/metabat/bins/"),
         checkmfolder = join(outdir, "{samp}/metabat/checkm/"),
     shell: """
         rm -rf {samp}/checkm/*
         checkm lineage_wf -t {threads} -x fa --tab_table -f {output} {params.binfolder} {params.checkmfolder}
+        """
+
+# checkm for maxbin output
+rule checkm_maxbin:
+    input:
+        lambda wildcards: expand(join(outdir, "{samp}/maxbin/bins/{maxbin_bin}.fasta"), maxbin_bin = get_maxbin_bins(wildcards), samp = wildcards.samp)
+    output:
+        join(outdir, "{samp}/maxbin/checkm/checkm.tsv")
+    log:
+        join(outdir, "{samp}/maxbin/logs/checkm.log")
+    singularity:
+        "shub://bsiranosian/bin_genomes:checkm"
+    resources:
+        mem=128,
+        time=12
+    threads: 4
+    params:
+        binfolder = join(outdir, "{samp}/maxbin/bins"),
+        checkmfolder = join(outdir, "{samp}/maxbin/checkm/"),
+        bin_ex = ".fasta"
+    shell: """
+        rm -rf {samp}/checkm/*
+        checkm lineage_wf -t {threads} -x {params.bin_ex} --tab_table -f {output} {params.binfolder} {params.checkmfolder}
         """
