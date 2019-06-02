@@ -35,7 +35,7 @@ From: ubuntu:16.04
     sed -i "s#/bin/env#/usr/bin/env#g" /usr/local/anaconda/bin/Fasta_to_Scaffolds2Bin.sh
 
     conda install -c bioconda -c conda-forge snakemake
-
+    conda install -c r r-data.table
 
 %runscript
    exec /bin/bash
