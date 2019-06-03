@@ -2,7 +2,7 @@
 from os.path import join, abspath, expanduser
 
 # Do I need to add local rules like in the other snakefile?
-localrules: bwa_index_setup, metabat, fasta_index
+localrules: bwa_index_setup #,metabat
 
 # Read in sample and outdir from config file
 samp = config['sample']
@@ -34,14 +34,19 @@ def get_maxbin_bins(wildcards):
     outputs = checkpoints.maxbin.get(**wildcards).output[0]
     return glob_wildcards(os.path.join(outputs, "{maxbin_bin}.fasta")).maxbin_bin
 
+def get_DAStool_bins(wildcards):
+    outputs = checkpoints.DAStool.get(**wildcards).output[0]
+    return glob_wildcards(os.path.join(outputs, "{DAStool_bin}.fa")).DAStool_bin
+
 rule all:
     input:
         #join(outdir, samp, "idx", samp+".fa")
         # checkm
         expand(join(outdir, "{samp}/metabat/checkm/checkm.tsv"), samp = config['sample']),
         expand(join(outdir, "{samp}/maxbin/checkm/checkm.tsv"), samp = config['sample']),
+        expand(join(outdir, "{samp}/DAS_tool/checkm/checkm.tsv"), samp = config['sample'])
         # Run DAStool
-        expand(join(outdir, "{samp}/DAS_tool/twomethods_DASTool_summary.txt"), samp = config['sample']),
+        #expand(join(outdir, "{samp}/DAS_tool/twomethods_DASTool_summary.txt"), samp = config['sample']),
 
 ##########################################
 ####### Prepping input for binning #######
@@ -190,14 +195,12 @@ checkpoint maxbin:
         """
 
 # Aggregate binning results using DAStool
-#checkpoint DAS_tool:
-rule DAS_tool:
+checkpoint DAStool:
     input:
         lambda wildcards: expand(join(outdir, "{samp}/metabat/bins/{metabat_bin}.fa"), metabat_bin = get_metabat_bins(wildcards), samp = wildcards.samp),
         lambda wildcards: expand(join(outdir, "{samp}/maxbin/bins/{maxbin_bin}.fasta"), maxbin_bin = get_maxbin_bins(wildcards), samp = wildcards.samp),
     output:
-        #directory(join(outdir, "{samp}/DAS_tool/twomethods_DAStool_bins"))
-        join(outdir, "{samp}/DAS_tool/twomethods_DASTool_summary.txt")
+        directory(join(outdir, "{samp}/DAS_tool/twomethods_DASTool_bins"))
     singularity:
         "shub://ambenj/bin_das_tool:dastool"
     params:
@@ -264,6 +267,28 @@ rule checkm_maxbin:
         binfolder = join(outdir, "{samp}/maxbin/bins"),
         checkmfolder = join(outdir, "{samp}/maxbin/checkm/"),
         bin_ex = ".fasta"
+    shell: """
+        rm -rf {samp}/checkm/*
+        checkm lineage_wf -t {threads} -x {params.bin_ex} --tab_table -f {output} {params.binfolder} {params.checkmfolder}
+        """
+
+rule checkm_DAStool:
+    input:
+        lambda wildcards: expand(join(outdir, "{samp}/DAS_tool/twomethods_DASTool_bins/{DAStool_bin}.fa"), DAStool_bin = get_DAStool_bins(wildcards), samp = wildcards.samp)
+    output:
+        join(outdir, "{samp}/DAS_tool/checkm/checkm.tsv")
+    log:
+        join(outdir, "{samp}/DAS_tool/logs/checkm.log")
+    singularity:
+        "shub://bsiranosian/bin_genomes:checkm"
+    resources:
+        mem=128,
+        time=12
+    threads: 4
+    params:
+        binfolder = join(outdir, "{samp}/DAS_tool/twomethods_DASTool_bins"),
+        checkmfolder = join(outdir, "{samp}/DAS_tool/checkm/"),
+        bin_ex = ".fa"
     shell: """
         rm -rf {samp}/checkm/*
         checkm lineage_wf -t {threads} -x {params.bin_ex} --tab_table -f {output} {params.binfolder} {params.checkmfolder}
