@@ -1,7 +1,9 @@
 assembly: /abs/path/asm/mysamp.fa
-# smaple name. Will create a folder with this in outdir_base 
-# for all the reuslts of binning this sample
-sample: mysamp
+
+# sample name. Will create a folder with this in outdir_base
+# for all the results of binning this sample
+sample: "mysamp"
+
 # base output directory. Will create direcrorties within for each sample you do this for
 outdir_base: /abs/path/binning
 
@@ -11,3 +13,6 @@ reads2: /abs/path/reads_2.fq.gz
 kraken2db: /labs/asbhatt/data/program_indices/kraken2/kraken_custom_feb2019/genbank_genome_chromosome_scaffold/
 read_length: 150 #mean read length
 long_read: False
+
+# are we using a non-standard (non ncbi) taxonomy
+custom_taxonomy: False

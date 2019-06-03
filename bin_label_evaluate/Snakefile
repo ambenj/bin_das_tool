@@ -8,6 +8,12 @@ localrules: bwa_index_setup #,metabat
 samp = config['sample']
 outdir = config['outdir_base']
 
+# are we using a non-standard (non ncbi) taxonomy
+if 'custom_taxonomy' in config:
+    custom_taxonomy = config['custom_taxonomy']
+else:
+    custom_taxonomy = False
+
 # convert outdir to absolute path
 if outdir[0] == '~':
     outdir = expanduser(outdir)
@@ -36,17 +42,22 @@ def get_maxbin_bins(wildcards):
 
 def get_DAStool_bins(wildcards):
     outputs = checkpoints.DAStool.get(**wildcards).output[0]
-    return glob_wildcards(os.path.join(outputs, "{DAStool_bin}.fa")).DAStool_bin
+    return glob_wildcards(os.path.join(outputs, "{bin}.fa")).bin
 
 rule all:
     input:
-        #join(outdir, samp, "idx", samp+".fa")
+        reads,
+        config['assembly'],
+        config['kraken2db'],
         # checkm
         expand(join(outdir, "{samp}/metabat/checkm/checkm.tsv"), samp = config['sample']),
         expand(join(outdir, "{samp}/maxbin/checkm/checkm.tsv"), samp = config['sample']),
-        expand(join(outdir, "{samp}/DAS_tool/checkm/checkm.tsv"), samp = config['sample']),
+        #expand(join(outdir, "{samp}/checkm/checkm.tsv"), samp = config['sample']),
         # Post-processing
-        expand(join(outdir, "{samp}/success.txt"), samp = config['sample'])
+        expand(join(outdir, "{samp}/classify/bin_species_calls.tsv"), samp = config['sample']),
+        expand(join(outdir, "{samp}/final/{samp}.tsv"), samp = config['sample']),
+        expand(join(outdir, "{samp}/final/{samp}_simple.tsv"), samp = config['sample']),
+        expand(join(outdir, "{samp}/final/bin_tig_mapping.tsv"), samp = config['sample']),
 
 ##########################################
 ####### Prepping input for binning #######
@@ -275,7 +286,7 @@ rule checkm_maxbin:
 # checkm for DAStool output
 rule checkm_DAStool:
     input:
-        lambda wildcards: expand(join(outdir, "{samp}/DAS_tool/twomethods_DASTool_bins/{DAStool_bin}.fa"), DAStool_bin = get_DAStool_bins(wildcards), samp = wildcards.samp)
+        lambda wildcards: expand(join(outdir, "{samp}/DAS_tool/twomethods_DASTool_bins/{bin}.fa"), bin = get_DAStool_bins(wildcards), samp = wildcards.samp)
     output:
         join(outdir, "{samp}/DAS_tool/checkm/checkm.tsv")
     log:
@@ -302,11 +313,11 @@ rule checkm_DAStool:
 # Use aragorn to detect tRNA and tmRNA genes
 rule aragorn:
     input:
-        join(outdir, "{samp}/DAS_tool/twomethods_DASTool_bins/{DAStool_bin}.fa")
+        join(outdir, "{samp}/DAS_tool/twomethods_DASTool_bins/{bin}.fa")
     output:
-        join(outdir, "{samp}/DAS_tool/rna/trna/{DAStool_bin}.fa.txt")
+        join(outdir, "{samp}/rna/trna/{bin}.fa.txt")
     log:
-        join(outdir, "{samp}/logs/aragorn_{DAStool_bin}.log")
+        join(outdir, "{samp}/logs/aragorn_{bin}.log")
     singularity:
         "shub://bsiranosian/bin_genomes:binning"
     resources:
@@ -319,11 +330,11 @@ rule aragorn:
 # Use barrnap to predict ribosomal RNA
 rule barrnap:
     input:
-        join(outdir, "{samp}/DAS_tool/twomethods_DASTool_bins/{DAStool_bin}.fa")
+        join(outdir, "{samp}/DAS_tool/twomethods_DASTool_bins/{bin}.fa")
     output:
-        join(outdir, "{samp}/DAS_tool/rna/rrna/{DAStool_bin}.fa.txt")
+        join(outdir, "{samp}/rna/rrna/{bin}.fa.txt")
     log:
-        join(outdir, "{samp}/logs/barrnap_{DAStool_bin}.log")
+        join(outdir, "{samp}/logs/barrnap_{bin}.log")
     singularity:
         "shub://bsiranosian/bin_genomes:binning"
     resources:
@@ -336,18 +347,18 @@ rule barrnap:
 # Use quast to evaluate genome assemblies
 rule quast:
     input:
-        join(outdir, "{samp}/DAS_tool/twomethods_DASTool_bins/{DAStool_bin}.fa")
+        join(outdir, "{samp}/DAS_tool/twomethods_DASTool_bins/{bin}.fa")
     output:
-        join(outdir, "{samp}/DAS_tool/quast/{DAStool_bin}.fa/report.txt")
+        join(outdir, "{samp}/quast/{bin}.fa/report.txt")
     log:
-        join(outdir, "{samp}/logs/quast_{DAStool_bin}.log")
+        join(outdir, "{samp}/logs/quast_{bin}.log")
     singularity:
         "shub://bsiranosian/bin_genomes:binning"
     resources:
         mem=8,
         time=1
     params:
-        quastfolder = join(outdir, "{samp}/DAS_tool/quast/{DAStool_bin}.fa/"),
+        quastfolder = join(outdir, "{samp}/quast/{bin}.fa/"),
         thresholds = "0,10000,50000,100000,250000,500000,1000000,2000000,3000000"
     shell: """
         quast.py -o {params.quastfolder} {input} --contig-thresholds {params.thresholds} --fast
@@ -356,11 +367,11 @@ rule quast:
 # Use prokka to annotate metagenomes
 rule prokka:
     input:
-        join(outdir, "{samp}/DAS_tool/twomethods_DASTool_bins/{DAStool_bin}.fa")
+        join(outdir, "{samp}/DAS_tool/twomethods_DASTool_bins/{bin}.fa")
     output:
-        join(outdir, "{samp}/DAS_tool/prokka/{DAStool_bin}.fa/{samp}_{DAStool_bin}.fa.gff")
+        join(outdir, "{samp}/prokka/{bin}.fa/{samp}_{bin}.fa.gff")
     log:
-        join(outdir, "{samp}/logs/prokka_{DAStool_bin}.log")
+        join(outdir, "{samp}/logs/prokka_{bin}.log")
     singularity:
         "shub://bsiranosian/bin_genomes:binning"
     resources:
@@ -368,21 +379,223 @@ rule prokka:
         time=1,
     threads: 8
     params:
-        prokkafolder = join(outdir, "{samp}/DAS_tool/prokka/{DAStool_bin}.fa"),
-        prefix = "{samp}_{DAStool_bin}.fa"
+        prokkafolder = join(outdir, "{samp}/prokka/{bin}.fa"),
+        prefix = "{samp}_{bin}.fa"
     shell: """
         prokka {input} --outdir {params.prokkafolder} --prefix {params.prefix} \
         --centre X --compliant --force --cpus {threads} --noanno
         """
 
-rule aggregate:
+# Index bam file to prepare for bamidx
+rule bam_idx:
     input:
-        lambda wildcards: expand(rules.prokka.output, DAStool_bin = get_DAStool_bins(wildcards), samp = wildcards.samp),
-        lambda wildcards: expand(rules.quast.output, DAStool_bin = get_DAStool_bins(wildcards), samp = wildcards.samp),
-        lambda wildcards: expand(rules.aragorn.output, DAStool_bin = get_DAStool_bins(wildcards), samp = wildcards.samp),
-        lambda wildcards: expand(rules.barrnap.output, DAStool_bin = get_DAStool_bins(wildcards), samp = wildcards.samp),
+        join(outdir, "{samp}/{samp}_lr.bam") if long_read else join(outdir, "{samp}/{samp}.bam") #choose a long read alignment or short read alignment
     output:
-        join(outdir, "{samp}/success.txt")
+        join(outdir, "{samp}/{samp}_lr.bam.bai") if long_read else join(outdir, "{samp}/{samp}.bam.bai") #choose a long read alignment or short read alignment
+    log:
+        join(outdir, "{samp}/logs/bamidx.log")
+    singularity:
+        "shub://bsiranosian/bin_genomes:binning"
+    resources:
+        mem=2,
+        time=2
+    shell:
+        "samtools index {input}"
+
+# Retrieve stats on mapping from whole metagenome sample
+rule bam_idxstats:
+    input:
+        join(outdir, "{samp}/{samp}_lr.bam") if long_read else join(outdir, "{samp}/{samp}.bam"), #choose a long read alignment or short read alignment,
+        join(outdir, "{samp}/{samp}_lr.bam.bai") if long_read else join(outdir, "{samp}/{samp}.bam.bai"), #choose a long read alignment or short read alignment,
+    output:
+        join(outdir, "{samp}/{samp}_lr.bam.bai.tsv") if long_read else join(outdir, "{samp}/{samp}.bam.bai.tsv"), #choose a long read alignment or short read alignment,
+    log:
+        join(outdir, "{samp}/logs/bamidxstats.log")
+    singularity:
+        "shub://bsiranosian/bin_genomes:binning"
+    resources:
+        mem=2,
+        time=2
+    shell:
+        "samtools idxstats {input[0]} > {output}"
+
+# Get mapping stats for each bin
+rule bin_idxstats:
+    input:
+        join(outdir, "{samp}/DAS_tool/twomethods_DASTool_bins/{bin}.fa"),
+        join(outdir, "{samp}/{samp}_lr.bam.bai.tsv") if long_read else join(outdir, "{samp}/{samp}.bam.bai.tsv"), #choose a long read alignment or short read alignment,
+    output:
+        join(outdir, "{samp}/coverage/raw/{bin}.tsv")
+    log:
+        join(outdir, "{samp}/logs/coverage_idxstats_{bin}.log")
+    singularity:
+        "shub://bsiranosian/bin_genomes:binning"
+    resources:
+        mem=2,
+        time=1
+    shell:
+        "grep '>' {input[0]} | tr -d '>' | xargs -I foo -n 1 grep -P 'foo\t' {input[1]} > {output}"
+
+# Determine coverage for each bin
+rule bin_coverage:
+    input:
+        rules.bin_idxstats.output
+    output:
+        join(outdir, "{samp}/coverage/{bin}.txt")
+    log:
+        join(outdir, "{samp}/logs/coverage_{bin}.log")
+    singularity:
+        "shub://bsiranosian/bin_genomes:binning"
+    resources:
+        mem=2,
+        time=1
+    params:
+        read_length = config['read_length']
+    script:
+        "scripts/bin_coverage.py"
+
+# index DAStool bins
+rule fasta_index:
+    input:
+        join(outdir, "{samp}/DAS_tool/twomethods_DASTool_bins/{bin}.fa")
+    output:
+        join(outdir, "{samp}/DAS_tool/twomethods_DASTool_bins/{bin}.fa.fai")
+    log:
+        join(outdir, "{samp}/logs/faidx_{bin}.log")
+    singularity:
+        "shub://bsiranosian/bin_genomes:binning"
+    resources:
+        mem=8,
+        time=1
+    threads: 1
+    shell:
+        "samtools faidx {input}"
+
+# Use kraken2 to assign taxonomic labels
+rule kraken2:
+    input:
+        join(outdir, "{samp}/idx/{samp}.fa")
+    output:
+        krak = join(outdir, "{samp}/classify/{samp}.krak"),
+        krak_report = join(outdir, "{samp}/classify/{samp}.krak.report")
+    log:
+        join(outdir, "{samp}/logs/kraken_class.log")
+    singularity:
+        "shub://bsiranosian/bin_genomes:binning"
+    params:
+        db = config['kraken2db']
+    resources:
+        mem=256,
+        time=1
+    threads: 8
     shell: """
-        touch {output}
+        kraken2 --db {params.db} --db {params.db} --threads {threads} \
+        --output {output.krak} --report {output.krak_report} {input}
         """
+
+rule label_bins:
+    input:
+        krak = join(outdir, "{samp}/classify/{samp}.krak"),
+        bins = lambda wildcards: expand(join(outdir, "{samp}/DAS_tool/twomethods_DASTool_bins/{bin}.fa.fai"),
+                                        bin = get_DAStool_bins(wildcards), samp = wildcards.samp)
+    output:
+        join(outdir, "{samp}/classify/bin_species_calls.tsv")
+    log:
+        join(outdir, "{samp}/logs/assign_species.log")
+    singularity:
+        "shub://bsiranosian/bin_genomes:binning"
+    params:
+        binfolder = join(outdir, "{samp}/DAS_tool/twomethods_DASTool_bins/"),
+        custom_taxonomy = custom_taxonomy
+    script:
+        "scripts/assign_species.py"
+
+rule postprocess_raw:
+    input:
+        join(outdir, "{samp}/DAS_tool/checkm/checkm.tsv"),
+        lambda wildcards: expand(rules.prokka.output, bin = get_DAStool_bins(wildcards), samp = wildcards.samp),
+        lambda wildcards: expand(rules.quast.output, bin = get_DAStool_bins(wildcards), samp = wildcards.samp),
+        lambda wildcards: expand(rules.aragorn.output, bin = get_DAStool_bins(wildcards), samp = wildcards.samp),
+        lambda wildcards: expand(rules.barrnap.output, bin = get_DAStool_bins(wildcards), samp = wildcards.samp),
+        lambda wildcards: expand(rules.bin_coverage.output, bin = get_DAStool_bins(wildcards), samp = wildcards.samp),
+        rules.label_bins.output
+    output:
+        prokka = join(outdir, "{samp}/final/prokka.tmp"),
+        quast = join(outdir, "{samp}/final/quast.tmp"),
+        checkm = join(outdir, "{samp}/final/checkm.tmp"),
+        trna = join(outdir, "{samp}/final/trna.tmp"),
+        rrna = join(outdir, "{samp}/final/rrna.tmp"),
+        classify = join(outdir, "{samp}/final/classify.tmp"),
+        coverage = join(outdir, "{samp}/final/coverage.tmp"),
+    log:
+        join(outdir, "{samp}/logs/postprocess.log")
+    resources:
+        mem=2,
+        time=1
+    params:
+        coverage_str = join(outdir, "{samp}/coverage/*.txt"),
+        prokka_str = join(outdir, "{samp}/prokka"),
+        quast_str = join(outdir, "{samp}/quast/"),
+        checkm_str = join(outdir, "{samp}/DAS_tool/checkm/checkm.tsv"),
+        trna_str = join(outdir, "{samp}/rna/trna/*"),
+        rrna_str = join(outdir, "{samp}/rna/rrna/*"),
+        kraken_str = join(outdir, "{samp}/classify/bin_species_calls.tsv"),
+
+    shell: """
+        # coverage
+        (echo -e 'Sample\tBin\tCoverage'; cat {params.coverage_str}) > {output.coverage}
+        # prokka
+        (echo -e 'Sample\tBin\tGenes'; find {params.prokka_str} -name '*.gff' | xargs grep -H -c CDS | rev | cut -f1 -d '/' | rev | sed 's/.fa.gff:/\t/g' | sed 's/{samp}_/{samp}\t/g' | sort -k2,2g) > {output.prokka}
+        # quast
+        find {params.quast_str} -name 'transposed_report.tsv' | xargs head -qn1 | sort -u | sed 's/^Assembly/Sample\tBin/g' > {output.quast}
+        find {params.quast_str} -name 'transposed_report.tsv' | xargs tail -qn+2 | sort -u | sed 's/^/{samp}\t/g' >> {output.quast}
+        # checkm
+        head -qn1 {params.checkm_str} | sed 's/^Bin Id/Sample\tBin/g' > {output.checkm}
+        tail -qn+2 {params.checkm_str} | sed 's/^/{samp}\t/g' >> {output.checkm}
+        # trna
+        (echo -e 'Sample\tBin\ttRNA'; grep -H Total {params.trna_str} | sed 's/\/rna\/trna\//\t/g' | sed 's/.fa.txt:Total tRNA genes = /\t/g' | awk '{{ print  gensub( ".*/", "", "a") }}' ) > {output.trna}
+        #rrna
+        (echo -e 'Sample\tBin\trna.16S\trna.23S\trna.5S'; paste <(grep -H -c 16S {params.rrna_str} | sed 's/\/rna\/rrna\//\t/g' | sed 's/.fa.txt:/\t/g') \
+        <(grep -H -c 23S {params.rrna_str} | sed 's/\/rna\/rrna\//\t/g' | sed 's/.fa.txt:/\t/g' | cut -f4) \
+        <(grep -H -c 5S {params.rrna_str} | sed 's/\/rna\/rrna\//\t/g' | sed 's/.fa.txt:/\t/g' | cut -f4)) |  awk '{{ print  gensub( ".*/", "", "a") }}' > {output.rrna}
+        # classify
+        cat {params.kraken_str} | sed 's/\.fa//g' > {output.classify}
+        """
+
+rule postprocess_final:
+    input:
+        prokka = join(outdir, "{samp}/final/prokka.tmp"),
+        quast = join(outdir, "{samp}/final/quast.tmp"),
+        checkm = join(outdir, "{samp}/final/checkm.tmp"),
+        trna = join(outdir, "{samp}/final/trna.tmp"),
+        rrna = join(outdir, "{samp}/final/rrna.tmp"),
+        classify = join(outdir, "{samp}/final/classify.tmp"),
+        coverage = join(outdir, "{samp}/final/coverage.tmp"),
+    output:
+        join(outdir, "{samp}/final/{samp}.tsv")
+    log:
+        join(outdir, "{samp}/logs/postprocess.log")
+    singularity:
+        "shub://bsiranosian/bin_genomes:binning"
+    script:
+        "scripts/join_final_tables.R"
+
+rule postprocess_simplify:
+    input:
+        join(outdir, "{samp}/final/{samp}.tsv")
+    output:
+        join(outdir, "{samp}/final/{samp}_simple.tsv")
+    shell: """
+        # awk 'BEGIN {{FS="\t"}} {{OFS="\t"}} {{print($1,$2,$47,$50,$48,$49,$51,$40,$41,$42,$4,$23,$25,$26)}}' {input} > {output}
+        awk 'BEGIN {{FS="\t"}} {{OFS="\t"}} {{print($2,$1,$48,$49,$50,$51,$52,$53,$47,$54,$40,$41,$42,$4,$23,$25,$26)}}' {input} > {output}
+        """
+
+rule bin_tig_mapping:
+    input:
+        rules.postprocess_final.output
+    output:
+        join(outdir, "{samp}/final/bin_tig_mapping.tsv")
+    singularity:
+        "shub://bsiranosian/bin_genomes:binning"
+    shell:
+        "ls {samp}/DAS_tool/twomethods_DASTool_bins/ | grep fai  | xargs -n 1 -I foo sh -c \"cat {samp}/bins/foo | sed 's/^/foo\t/g' \" | sed 's/.fa.fai//g' | cut -f1,2 > {output}"
