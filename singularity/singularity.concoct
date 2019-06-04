@@ -31,7 +31,9 @@ From: ubuntu:16.04
     conda config --add channels conda-forge
 
     # requirements for das_tool workflow
-    conda install -c bioconda concoct
+    conda install -c bioconda concoct bedtools picard samtools bowtie2 pysam parallel
+    wget https://github.com/BinPro/CONCOCT/archive/1.0.0.tar.gz
+    tar -xzf 1.0.0.tar.gz
 
     conda install -c bioconda -c conda-forge snakemake
 
