@@ -1,4 +1,4 @@
-Pipeline for binning and aggregation using DAStool
+##Pipeline for binning and aggregation using DAStool
 
 This is a binning pipeline that takes metagenome assembly (fasta) and reads (fastq). It runs three binning programs (Maxbin2, Metabat2, and myCC) and then uses DAStool to aggregrate the three bin sets into a final consensus bin set.
 
